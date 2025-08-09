@@ -53,12 +53,13 @@ const login = asyncHandler(async (req, res) => {
      * 
      */
 
-    res.cookie('jwt', refreshToken, {
+    res.cookie('__Host-jwt', refreshToken, {
         httpOnly: true, //accessible onbly by the web server
         secure: true, //samesiten none moet samen met secure true, ook voor een local host
         sameSite: 'None', //Cross -site cookie,
         path: '/',
-        maxAge: 7 * 24 * 60 * 60 * 1000 //cookie 
+        maxAge: 7 * 24 * 60 * 60 * 1000, //cookie,
+        partitioned: true,  // <-- essentieel voor 3P cookies anno 2025
 
     })
 
@@ -70,6 +71,8 @@ const login = asyncHandler(async (req, res) => {
      * met path '/' stuuir je de cookie applicatoie breed mee
      * Niet onveilig vanwege http only en https, de same site none is nodig vanwege backend -frontend
      * Maar door de cors bepaal jij welke sites allowed zijn
+     * 
+     * de partioned cookie: __Host-jwt is nooding om dat de backend via render op verschillende domainen zitten
      * 
      */
 
@@ -127,7 +130,7 @@ const refresh = (req, res ) => {
 const logout = (req, res) => {
     const cookies = req.cookies
     if (!cookies?.jwt) return res.sendStatus(204) // No content
-    res.clearCookie('jwt', { httpOnly: true, sameSite: 'None', secure: true })
+    res.clearCookie('__Host-jwt', { httpOnly: true, sameSite: 'None', secure: true, partitioned: true })
     res.json({ message: 'Cookie cleared'})
 
 }
@@ -246,4 +249,108 @@ Bij verificatie:
     • Als die overeenkomt met de signature in de token → token is geldig
     • Anders → error (bijv. 'invalid signature' of 'jwt expired')
 
+*/
+
+
+/*
+===========================================
+🍪 PARTITIONED COOKIES (CHIPS) — UITLEG
+===========================================
+
+PROBLEEM (2024/2025):
+---------------------
+Browsers (Chrome, Edge, later ook anderen) blokkeren "third‑party cookies"
+standaard. Een cookie die door domein A is gezet, wordt NIET meer meegestuurd
+wanneer je vanaf top-level site B een XHR/fetch naar A doet. Gevolg:
+- Refresh-tokens in HttpOnly cookies tussen FE (onrender.com) en API (onrender.com met andere subdomain) gaan NIET mee.
+- /auth/refresh geeft 401 omdat req.cookies leeg is.
+
+OPLOSSING: CHIPS / Partitioned Cookies
+--------------------------------------
+CHIPS = Cookies Having Independent Partitioned State.
+In plaats van één globale cookie per domein, krijgt elk cookie een "partition key":
+de top-level site (het domein dat in de adresbalk staat). De browser bewaart dus
+een **gescheiden kopie** van dezelfde cookie per top-level site. Dat levert:
+
+- ✅ Cookie mag weer worden meegestuurd in een third‑party context (cross-site),
+  ZONDER cross-site tracking mogelijk te maken.
+- ✅ Werkt voor XHR/fetch, iframes, en andere embed-scenario’s.
+- ✅ Geschikt voor refresh-tokens: je API ziet de cookie wanneer je FE die inlaadt.
+
+BELANGRIJKE EISEN (moeten kloppen):
+-----------------------------------
+1) `partitioned: true`  -> markeert het als CHIPS-cookie.
+2) `secure: true`       -> alleen via HTTPS (verplicht).
+3) `sameSite: 'None'`   -> omdat het cookie in een cross-site context meegestuurd wordt.
+4) `path: '/'`          -> best practice; verplicht als je het __Host- prefix gebruikt.
+5) *Geen* `domain`-attribuut bij __Host- cookies.
+6) Zet het cookie als `HttpOnly: true` (beschermt tegen XSS).
+
+__Host- PREFIX (aanrader):
+--------------------------
+Naam je cookie `__Host-jwt`. Dit prefix dwingt extra veiligheid af:
+- Vereist `Secure` en `Path=/`.
+- Verbiedt het zetten van een `Domain`-attribuut (cookie geldt alleen voor exact host).
+- Maakt "cookie fixation" moeilijker.
+
+CONCREET VOORBEELD:
+-------------------
+res.cookie('__Host-jwt', refreshToken, {
+  httpOnly: true,       // JS kan cookie niet lezen (bescherming bij XSS)
+  secure: true,         // alleen via HTTPS
+  sameSite: 'None',     // nodig voor cross-site requests
+  path: '/',            // site-breed (en vereist voor __Host-)
+  partitioned: true,    // <-- CHIPS aanzetten
+  maxAge: 7 * 24 * 60 * 60 * 1000
+});
+
+En bij uitloggen moet je dezelfde flags gebruiken:
+res.clearCookie('__Host-jwt', {
+  httpOnly: true, secure: true, sameSite: 'None', path: '/', partitioned: true
+});
+
+HOE HET WERKT (mentaal model):
+------------------------------
+- De browser slaat het cookie op als:  (topLevelSite, cookieHost) -> cookieValue
+- Sta je op top-level https://technotesmernstack.onrender.com en doe je een fetch
+  naar https://technotes-api-qgcr.onrender.com, dan wordt de "partition" herkend:
+  topLevelSite = technotesmernstack.onrender.com.
+- De browser kan het cookie nu meesturen, maar alléén binnen deze partition.
+- Ga je dezelfde API benaderen vanuit een ándere top-level site, krijg je een
+  lege (nieuwe) partition. Tracking tussen sites wordt zo voorkomen.
+- de prefix gaat dus over backend domain
+
+VEILIGHEID / BEST PRACTICES:
+----------------------------
+- Partitioned cookies voorkomen tracking, maar je moet nog steeds:
+  • `HttpOnly` gebruiken (tegen XSS).
+  • Access token in memory houden (niet in cookies/localStorage).
+  • CORS correct instellen: server `credentials: true`, client `credentials: 'include'`.
+- Overweeg op termijn **één custom (sub)domein** voor FE en API. Dan kun je
+  `SameSite=Lax` gebruiken en ben je niet afhankelijk van third‑party policies.
+- Gebruik korte TTL voor access tokens (bv. 15m) en een langere voor refresh (bv. 7d).
+
+BROWSER SUPPORT / FALLBACK:
+---------------------------
+- CHIPS is breed beschikbaar in moderne Chromium-browsers. Up-to-date versies van
+  Express' cookie lib ondersteunen `partitioned`.
+- Oudere browsers: partitioned wordt genegeerd -> cookie valt terug op third‑party
+  rules (en dus mogelijk niet meegestuurd). In praktijk: detecteer fout bij refresh
+  en toon een nette melding of adviseer "same-site deployment".
+
+DEBUGGING CHECKLIST:
+--------------------
+1) Login → Network → /auth → Response Headers: staat `Set-Cookie` met:
+   HttpOnly; Secure; SameSite=None; Path=/; Partitioned  ✅
+2) DevTools → Application → Cookies → API-host: staat cookie met vlag "Partitioned"? ✅
+3) Fetch naar /auth/refresh met `credentials: 'include'`:
+   Request Headers bevat `Cookie: __Host-jwt=...` ✅
+4) Server-side log `req.cookies` in refresh; als leeg → CORS/credentials niet goed.
+
+TL;DR:
+------
+Partitioned cookies (CHIPS) maken third‑party cookies weer bruikbaar voor
+legitieme cross-site use-cases (zoals refresh-tokens), zónder gebruikers over
+sites te kunnen tracken. Met `partitioned: true`, `SameSite=None`, `Secure`,
+`HttpOnly` en `Path=/` werkt je refresh-flow weer in 2025‑browsers.
 */
