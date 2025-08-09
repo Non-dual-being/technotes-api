@@ -88,9 +88,12 @@ const refresh = (req, res ) => {
 
     //console.log("cookies", cookies) wat ter controle
 
-    if (!cookies?.jwt) return res.status(401).json({ message : 'Unauthorized request'})
+    if (!cookies?.['__Host-jwt']) return res.status(401).json({ message: 'Unauthorized request' });
+
+
+    const refreshToken = cookies['__Host-jwt'];
     
-    const refreshToken = cookies.jwt;
+    
 
     jwt.verify(
         refreshToken,
