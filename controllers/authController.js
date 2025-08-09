@@ -76,7 +76,7 @@ const refresh = (req, res ) => {
 
     //console.log("cookies", cookies) wat ter controle
 
-    if (!cookies?.jwt) return res.status(401).json({ message : 'Unauthorized'})
+    if (!cookies?.jwt) return res.status(401).json({ message : 'Unauthorized no data'})
     
     const refreshToken = cookies.jwt;
 
