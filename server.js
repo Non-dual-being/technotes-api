@@ -14,12 +14,31 @@ const corsOptions = require(path.join(__dirname, 'config', 'corsOptions'))
 
 
 app.use(logger);
-
 connnectDB();
 
-app.use('/', express.json());
 
+app.set('trust proxy', 1); 
+
+/**
+ * Met render (een reverse proxy) is deze instelling belangrijk
+ * Je vertelt express dat je precies 1 proxy moet vertrouwen
+ * Dit helpt expres om de X-forwarder headers om
+ *  -------reg procotol goed te bepalen
+ * --------reg.secure op true te zetten
+ * ---------reg.ip correct te bepalen
+ * 
+ */
 app.use(cors(corsOptions));
+app.use(express.json());
+
+/**
+ * !express.json() niet mounten op de '/'
+ * kan ertoe leiden dat preflights en headers niet goed worden gezet
+ * en dat req.cookies niet beschikbaar is als het de endpoints bereikt
+ * 
+ * 
+ * 
+ * */
 
 app.use(cookieParser());
 

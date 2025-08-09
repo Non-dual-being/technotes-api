@@ -57,12 +57,21 @@ const login = asyncHandler(async (req, res) => {
         httpOnly: true, //accessible onbly by the web server
         secure: true, //samesiten none moet samen met secure true, ook voor een local host
         sameSite: 'None', //Cross -site cookie,
+        path: '/',
         maxAge: 7 * 24 * 60 * 60 * 1000 //cookie 
 
     })
 
     // send accesToken containing username an roles
     res.json({ accessToken });
+
+    /**
+     * path bepaalt op welke url paden van je de site de brouwerser dei cookie meestuurt
+     * met path '/' stuuir je de cookie applicatoie breed mee
+     * Niet onveilig vanwege http only en https, de same site none is nodig vanwege backend -frontend
+     * Maar door de cors bepaal jij welke sites allowed zijn
+     * 
+     */
 
 
 });
@@ -76,7 +85,7 @@ const refresh = (req, res ) => {
 
     //console.log("cookies", cookies) wat ter controle
 
-    if (!cookies?.jwt) return res.status(401).json({ message : 'Unauthorized no data'})
+    if (!cookies?.jwt) return res.status(401).json({ message : 'Unauthorized request'})
     
     const refreshToken = cookies.jwt;
 
